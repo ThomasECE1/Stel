@@ -60,11 +60,35 @@ function App() {
 
             const action = result.comfort_action;
 
-            if (action === "AUGMENTER_TEMP" && temperatureRef.current < 25) {
-                setTemperature(prev => Math.min(prev + 1, 25));
-                console.log(`Action: ${action}. T° ajustée.`);
-            } else if (action === "BAISSER_VENTILATION") {
-                console.log(`Action: ${action}. Ventilation à ajuster.`);
+            // Ajustement dynamique de la température selon l'émotion
+            if (action === "AUGMENTER_TEMP") {
+                // Émotions négatives (angry, sad, fear) → augmenter la température
+                setTemperature(prev => {
+                    const newTemp = Math.min(prev + 0.5, 28);
+                    console.log(`😠 ${result.emotion} détecté → T° augmentée: ${newTemp}°C`);
+                    return newTemp;
+                });
+            } else if (action === "DIMINUER_TEMP") {
+                // Émotions positives (happy) → diminuer la température
+                setTemperature(prev => {
+                    const newTemp = Math.max(prev - 0.5, 16);
+                    console.log(`😊 ${result.emotion} détecté → T° diminuée: ${newTemp}°C`);
+                    return newTemp;
+                });
+            } else if (action === "MAINTENIR_TEMP") {
+                // Neutre → revenir progressivement vers 22°C (plus rapidement)
+                setTemperature(prev => {
+                    if (prev > 22) {
+                        const newTemp = Math.max(prev - 0.5, 22);
+                        console.log(`😐 Neutre → T° stabilisée: ${newTemp}°C`);
+                        return newTemp;
+                    } else if (prev < 22) {
+                        const newTemp = Math.min(prev + 0.5, 22);
+                        console.log(`😐 Neutre → T° stabilisée: ${newTemp}°C`);
+                        return newTemp;
+                    }
+                    return prev;
+                });
             }
 
         } catch (err) {

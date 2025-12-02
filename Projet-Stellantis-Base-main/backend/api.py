@@ -18,7 +18,7 @@ def grayscale_to_rgb(x):
 
 # --- 2. CONFIGURATION ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, 'emotion_model_resnet.h5')
+MODEL_PATH = os.path.join(BASE_DIR, 'best_emotion_model.h5')
 IMG_SIZE = (48, 48)
 
 app = Flask(__name__)
@@ -50,8 +50,9 @@ def preprocess_image(image_bytes):
         # 2. Conversion en tableau Numpy (Forme attendue: (48, 48))
         image_array = np.array(image, dtype=np.float32)
 
-        # 3. NORMALISATION SIMPLE (0-255 -> 0-1)
-        image_array /= 255.0
+        # 3. PAS DE NORMALISATION - TensorFlow image_dataset_from_directory
+        # garde les valeurs 0-255, donc on garde les mêmes valeurs
+        # (Ne pas diviser par 255 ici car le modèle a été entraîné avec des valeurs 0-255)
 
         # 4. Ajout des dimensions de canal (1) et de batch (1)
         image_array = np.expand_dims(image_array, axis=-1)  # Ajoute la dimension Canal (1) -> forme (48, 48, 1)
@@ -81,11 +82,17 @@ def predict():
         return jsonify({"error": "Image non valide ou erreur de traitement"}), 400
 
     # Faire la prédiction
-    predictions = MODEL.predict(processed_image)
+    predictions = MODEL.predict(processed_image, verbose=0)
 
     # ----------------------------------------------------
-    # CORRECTION : AJOUT D'UN SEUIL DE CONFIANCE & TOP 3
+    # DEBUG : Afficher tous les scores
     # ----------------------------------------------------
+    print("\n=== SCORES DE PRÉDICTION ===")
+    for i, emotion in enumerate(EMOTION_CLASSES):
+        score = predictions[0][i] * 100
+        bar = "█" * int(score / 5)
+        print(f"{emotion:10}: {score:5.1f}% {bar}")
+    print("=" * 30)
 
     # Probabilité maximale et émotion prédite
     max_probability = np.max(predictions[0])
@@ -99,29 +106,20 @@ def predict():
         for i in top_3_indices
     ]
 
-    # Nous définissons un SEUIL DE CONFIANCE (ex: 35%).
-    CONFIDENCE_THRESHOLD = 0.35
-
+    # LOGIQUE SIMPLE : Utiliser l'émotion avec le score le plus élevé
     final_emotion = predicted_emotion
-    action = "MAINTENIR_TEMP"
-    message = "Détecté neutre. Confort stable."
 
-    # Si la prédiction est supérieure au seuil, on applique la logique métier
-    if max_probability > CONFIDENCE_THRESHOLD:
-
-        if predicted_emotion in ['angry', 'sad', 'fear']:
-            action = "AUGMENTER_TEMP"
-            message = f"Détecté {predicted_emotion} ({max_probability * 100:.1f}%). Suggestion d'amélioration du confort."
-        elif predicted_emotion in ['disgust', 'surprise']:
-            action = "BAISSER_VENTILATION"
-            message = f"Détecté {predicted_emotion} ({max_probability * 100:.1f}%). Suggestion d'ajustement du flux d'air."
-        else:  # happy, neutral (qui sont au-dessus de 35% de confiance)
-            action = "MAINTENIR_TEMP"
-            message = f"Détecté {predicted_emotion} ({max_probability * 100:.1f}%). Confort stable."
-
-    else:
-        # Si la confiance est faible, on peut considérer l'émotion comme 'neutre/inconnu'.
-        message = f"Détecté Neutre/Inconnu (Max conf. {max_probability * 100:.1f}%). Confort maintenu."
+    if predicted_emotion in ['angry', 'fear', 'sad', 'disgust']:
+        # Émotions négatives → augmenter la température
+        action = "AUGMENTER_TEMP"
+        message = f"Détecté {predicted_emotion} ({max_probability * 100:.1f}%). Augmentation de la température."
+    elif predicted_emotion in ['happy', 'surprise']:
+        # Émotions positives → diminuer la température
+        action = "DIMINUER_TEMP"
+        message = f"Détecté {predicted_emotion} ({max_probability * 100:.1f}%). Diminution de la température."
+    else:  # neutral
+        action = "MAINTENIR_TEMP"
+        message = f"Détecté {predicted_emotion} ({max_probability * 100:.1f}%). Confort stable."
 
     return jsonify({
         "emotion": final_emotion,
