@@ -58,6 +58,11 @@ function App() {
 
             setPrimaryEmotion(result.emotion);
 
+            // Afficher l'image annotée avec le masque
+            if (result.annotated_image) {
+                setAnnotatedImage(result.annotated_image);
+            }
+
             const action = result.comfort_action;
 
             // Ajustement dynamique de la température selon l'émotion
