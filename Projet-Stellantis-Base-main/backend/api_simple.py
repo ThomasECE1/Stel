@@ -51,8 +51,23 @@ def detect_smile(face_roi_gray):
 def detect_frown(face_roi_gray):
     """
     Détecte un froncement de sourcils avec plusieurs méthodes combinées
+    Adapte les seuils en fonction de la luminosité
     """
     h, w = face_roi_gray.shape
+
+    # Mesurer la luminosité moyenne du visage
+    brightness = np.mean(face_roi_gray)
+
+    # Adapter les seuils selon la luminosité
+    # Plus c'est lumineux, plus les seuils doivent être élevés (moins sensible)
+    if brightness > 130:  # Très lumineux
+        brightness_factor = 2.0  # Seuils 100% plus hauts
+    elif brightness > 100:  # Lumineux
+        brightness_factor = 1.6  # Seuils 60% plus hauts
+    elif brightness > 80:  # Normal
+        brightness_factor = 1.2  # Seuils 20% plus hauts
+    else:  # Sombre
+        brightness_factor = 1.0  # Seuils normaux
 
     # Zone centrale entre les sourcils (glabelle) - c'est là que les rides apparaissent
     glabella_region = face_roi_gray[int(h*0.15):int(h*0.35), int(w*0.35):int(w*0.65)]
@@ -68,38 +83,41 @@ def detect_frown(face_roi_gray):
         # Gradient vertical pour détecter les rides verticales
         sobel_v = cv2.Sobel(glabella_region, cv2.CV_64F, 1, 0, ksize=3)
         vertical_lines = np.mean(np.abs(sobel_v))
-        frown_indicators += min(vertical_lines / 30, 0.4)
+        # Seuil adapté à la luminosité
+        frown_indicators += min(vertical_lines / (30 * brightness_factor), 0.4)
 
     # 2. Contraste élevé dans la zone glabelle (rides = fort contraste)
     if glabella_region.size > 0:
         glabella_std = np.std(glabella_region)
-        if glabella_std > 35:
+        # Seuils adaptés à la luminosité
+        if glabella_std > 35 * brightness_factor:
             frown_indicators += 0.3
-        elif glabella_std > 25:
+        elif glabella_std > 25 * brightness_factor:
             frown_indicators += 0.2
-        elif glabella_std > 15:
+        elif glabella_std > 15 * brightness_factor:
             frown_indicators += 0.1
 
     # 3. Assombrissement de la zone glabelle (ombre des sourcils froncés)
     if glabella_region.size > 0 and left_brow.size > 0 and right_brow.size > 0:
         glabella_mean = np.mean(glabella_region)
         brows_mean = (np.mean(left_brow) + np.mean(right_brow)) / 2
-        # Si la glabelle est plus sombre que les côtés = sourcils rapprochés
-        if glabella_mean < brows_mean - 10:
+        # Seuils adaptés à la luminosité
+        if glabella_mean < brows_mean - (10 * brightness_factor):
             frown_indicators += 0.3
-        elif glabella_mean < brows_mean - 5:
+        elif glabella_mean < brows_mean - (5 * brightness_factor):
             frown_indicators += 0.15
 
     # 4. Texture rugueuse dans la région des sourcils
     if glabella_region.size > 0:
         laplacian = cv2.Laplacian(glabella_region, cv2.CV_64F)
         texture_score = np.var(laplacian)
-        if texture_score > 500:
+        # Seuils adaptés à la luminosité
+        if texture_score > 500 * brightness_factor:
             frown_indicators += 0.2
-        elif texture_score > 300:
+        elif texture_score > 300 * brightness_factor:
             frown_indicators += 0.1
 
-    return min(frown_indicators, 1.0)
+    return min(frown_indicators, 1.0), brightness
 
 
 def analyze_mouth_shape(face_roi_gray):
@@ -197,6 +215,7 @@ def classify_emotion(smile_score, frown_score, mouth_ratio, intensity, mouth_cur
     """
     Classifie l'émotion en combinant tous les indicateurs
     - HAPPY: sourire détecté, coins de bouche relevés
+    - SAD: coins de bouche vers le bas
     - ANGRY: sourcils froncés (critère principal)
     - NEUTRAL: expression neutre
     """
@@ -353,14 +372,46 @@ def process_image(image_data):
     face_roi = gray[y:y+h, x:x+w]
 
     smile_score = detect_smile(face_roi)
-    frown_score = detect_frown(face_roi)
+    frown_score, brightness = detect_frown(face_roi)
     mouth_ratio, mouth_curve = analyze_mouth_shape(face_roi)
     intensity = analyze_face_intensity(face_roi)
 
     emotion, scores = classify_emotion(smile_score, frown_score, mouth_ratio, intensity, mouth_curve)
 
-    # Debug: afficher tous les scores pour ajuster les seuils
-    print(f"[DEBUG] smile={smile_score:.2f} frown={frown_score:.2f} curve={mouth_curve:.3f} ratio={mouth_ratio:.1f} | ANGRY={scores['angry']*100:.0f}% NEUTRAL={scores['neutral']*100:.0f}% HAPPY={scores['happy']*100:.0f}% → {emotion.upper()}")
+    # Debug visuel avec barres de progression
+    def make_bar(value, max_val=100, width=20):
+        filled = int((value / max_val) * width)
+        return '█' * filled + '░' * (width - filled)
+
+    # Indicateur de luminosité
+    if brightness > 150:
+        light_icon = "☀️ TRÈS LUMINEUX"
+    elif brightness > 120:
+        light_icon = "🌤️ LUMINEUX"
+    elif brightness > 90:
+        light_icon = "⛅ NORMAL"
+    else:
+        light_icon = "🌙 SOMBRE"
+
+    # Emojis pour chaque émotion
+    emojis = {'angry': '😠', 'neutral': '😐', 'happy': '😊'}
+
+    # Trouver l'émotion dominante
+    winner = emojis.get(emotion, '❓')
+
+    print(f"\n{'='*50}")
+    print(f"  {winner} ÉMOTION DÉTECTÉE: {emotion.upper()} {winner}")
+    print(f"{'='*50}")
+    print(f"  💡 Luminosité: {brightness:.0f} ({light_icon})")
+    print(f"  📊 Scores:")
+    for emo in ['happy', 'neutral', 'angry']:
+        pct = scores[emo] * 100
+        bar = make_bar(pct)
+        marker = " ◄" if emo == emotion else ""
+        print(f"     {emojis[emo]} {emo.upper():8} {bar} {pct:5.1f}%{marker}")
+    print(f"  ─────────────────────────────────────────")
+    print(f"  📈 Métriques: smile={smile_score:.2f} | frown={frown_score:.2f} | curve={mouth_curve:+.3f}")
+    print(f"{'='*50}\n")
 
     features = {
         'smile_score': smile_score,
